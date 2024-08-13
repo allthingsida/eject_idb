@@ -1,0 +1,9 @@
+.vscode/
+obj/
+__pycache__/
+build*/
+.vs/
+Debug/
+Release/
+x64/
+BINARIES/
