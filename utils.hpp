@@ -24,5 +24,9 @@ inline unsigned long djb2(const char* str) {
 }
 
 inline void make_semaphore_name(const char* string, char* out, size_t out_size) {
+#ifdef __IDP__
+    qsnprintf(out, out_size, "ejectidb_%08lx", djb2(string));
+#else
     snprintf(out, out_size, "ejectidb_%08lx", djb2(string));
+#endif
 }
