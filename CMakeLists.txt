@@ -23,6 +23,8 @@ ida_add_plugin(eject_plugin
         eject_plugin.cpp
         utils.hpp
         README.md
+    METADATA_JSON
+        ida-plugin.json
     DEBUG_ARGS
         "-t"
         "-z10000"
