@@ -5,7 +5,7 @@ project(eject_idb)
 set(CMAKE_CXX_STANDARD 17)
 
 # Include IDA SDK bootstrap
-include($ENV{IDASDK}/ida-cmake/bootstrap.cmake)
+include($ENV{IDASDK}/src/cmake/bootstrap.cmake)
 find_package(idasdk REQUIRED)
 
 # Standalone executable (not an IDA addon)

@@ -8,6 +8,8 @@ In short, `eject_idb` can be used as a last-ditch effort to save your work befor
 
 **Note: This ejection mechanism is not foolproof and might not work in all scenarios**
 
+![eject_idb in action](eject_idb.png)
+
 ## Building
 
 Prerequisites:
@@ -48,4 +50,11 @@ To simulate and test a crash, run the plugin with arg=1, like this:
 
 ```python
 idaapi.load_and_run_plugin("eject_plugin", 1)
+```
+
+Or, to cause a real crash (access violation) for testing purposes:
+
+```python
+import ctypes
+ctypes.cast(0x123, ctypes.POINTER(ctypes.c_int))[0] = 0
 ```
