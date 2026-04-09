@@ -12,10 +12,16 @@ find_package(idasdk REQUIRED)
 add_executable(eject_idb eject_idb.cpp utils.hpp README.md)
 set_source_files_properties(README.md PROPERTIES HEADER_FILE_ONLY TRUE)
 
-# Deploy executable to IDA bin directory
-install(TARGETS eject_idb
-    RUNTIME DESTINATION "${IDABIN}"
+# Deploy executable to IDA bin directory at build time
+set_target_properties(eject_idb PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${IDABIN}"
 )
+foreach(config Debug Release RelWithDebInfo MinSizeRel)
+    string(TOUPPER ${config} config_upper)
+    set_target_properties(eject_idb PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY_${config_upper} "${IDABIN}"
+    )
+endforeach()
 
 # IDA plugin (automatically deployed to $IDABIN/plugins/)
 ida_add_plugin(eject_plugin
