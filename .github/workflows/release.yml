@@ -58,9 +58,11 @@ jobs:
           # Copy plugin
           find "${IDASDK}/src/bin/plugins" -name "eject_plugin.${{ matrix.plugin_ext }}" -exec cp {} dist/ \; 2>/dev/null || \
           find build -name "eject_plugin.${{ matrix.plugin_ext }}" -exec cp {} dist/ \;
-          # Copy executable (CMake deploys it to $IDASDK/bin, not build/)
-          cp "${IDASDK}/bin/eject_idb${{ matrix.exe_ext }}" dist/ \
-            || find build -name "eject_idb${{ matrix.exe_ext }}" -exec cp {} dist/ \;
+          # Copy executable (CMake deploys it to $IDABIN, not build/;
+          # IDABIN is $IDASDK/src/bin for the GitHub SDK layout, else $IDASDK/bin)
+          cp "${IDASDK}/src/bin/eject_idb${{ matrix.exe_ext }}" dist/ 2>/dev/null \
+            || cp "${IDASDK}/bin/eject_idb${{ matrix.exe_ext }}" dist/ 2>/dev/null \
+            || find build "${IDASDK}" -name "eject_idb${{ matrix.exe_ext }}" -exec cp {} dist/ \;
           # Copy docs
           [ -f README.md ] && cp README.md dist/
 
