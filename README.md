@@ -58,3 +58,7 @@ Or, to cause a real crash (access violation) for testing purposes:
 import ctypes
 ctypes.cast(0x123, ctypes.POINTER(ctypes.c_int))[0] = 0
 ```
+
+## License
+
+Human-Origin Source License v1.0 (source-available) - see [LICENSE](LICENSE) and the per-file `SPDX-License-Identifier: LicenseRef-Human-Origin-Source-1.0` headers. Copyright (c) 2019-2026 Elias Bachaalany.

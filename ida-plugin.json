@@ -1,8 +1,8 @@
 {
   "IDAMetadataDescriptorVersion": 1,
   "plugin": {
-    "name": "Eject IDB",
-    "version": "1.0.0",
+    "name": "eject_idb",
+    "version": "0.0.3",
     "entryPoint": "eject_plugin",
     "description": "Emergency IDB saver that spawns a separate thread waiting for a signal to save your database when IDA hangs or crashes.",
     "urls": {
@@ -17,12 +17,20 @@
     "categories": [
       "collaboration-and-productivity"
     ],
+    "keywords": [
+      "crash-recovery",
+      "emergency-save",
+      "idb",
+      "backup",
+      "recovery"
+    ],
     "idaVersions": ">=9.0",
     "platforms": [
       "windows-x86_64",
       "linux-x86_64",
+      "macos-x86_64",
       "macos-aarch64"
     ],
-    "license": "MIT"
+    "license": "LicenseRef-Human-Origin-Source-1.0"
   }
 }

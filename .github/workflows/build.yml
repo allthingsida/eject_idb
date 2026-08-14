@@ -1,44 +1,306 @@
+# Copyright (c) 2019-2026 Elias Bachaalany
+# SPDX-License-Identifier: LicenseRef-Human-Origin-Source-1.0
+#
+# This file is licensed under the Human-Origin Source License v1.0.
+# See LICENSE.
+
 name: build
 
 on:
   push:
-    branches: ["**"]
+    branches: [main]
+    tags: ["v*", "V*"]
   pull_request:
     branches: ["**"]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Two deliverables, packaged the hcli / IDA-Plugin-Manager way (see
+# kb-ati/references/hcli-cpp-plugins.md, modeled on HexRaysSA/bindiff):
+#   1. eject_plugin  -> a FLAT per-IDA-version zip: ida-plugin.json (idaVersions "==<ver>")
+#      + eject_plugin.{dll,so,dylib} at the zip root (macOS = universal). hcli-installable.
+#   2. eject_idb     -> the standalone saver exe, shipped as SEPARATE release assets
+#      (never inside the plugin zip). x64 + native ARM64.
+
 jobs:
-  build:
-    name: Build (${{ matrix.os }})
+  # --- Plugin binaries for the hcli fat archive: win-x64, linux-x64, macOS-universal, per IDA version ---
+  plugin:
+    name: Plugin (${{ matrix.os }}, ${{ matrix.sdk }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [Linux, macOS, Windows]
+        sdk: [v9.2.0-sdk.1, v9.3.1-sdk.1, v9.4.0-release]
+        include:
+          - os: Linux
+            runner: ubuntu-latest
+            ext: so
+          - os: macOS
+            runner: macos-latest
+            ext: dylib
+          - os: Windows
+            runner: windows-latest
+            ext: dll
+    env:
+      IDASDK: ${{ github.workspace }}/ida-sdk
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup IDA SDK (${{ matrix.sdk }}) + our ida-cmake
+        shell: bash
+        run: |
+          git clone --branch ${{ matrix.sdk }} --depth 1 https://github.com/HexRaysSA/ida-sdk ida-sdk
+          git clone --depth 1 https://github.com/allthingsida/ida-cmake "${IDASDK}/ida-cmake"
+
+      - name: Configure & build
+        shell: bash
+        run: |
+          if [ "${{ matrix.os }}" = "Windows" ]; then
+            cmake -S . -B build -A x64
+            cmake --build build --config Release --parallel
+          elif [ "${{ matrix.os }}" = "macOS" ]; then
+            cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64"
+            cmake --build build --parallel
+          else
+            cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+            cmake --build build --parallel
+          fi
+
+      - name: Stage plugin + version-stamped metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ matrix.sdk }}" in
+            v9.2.0-sdk.1)   IDA=9.2 ;;
+            v9.3.1-sdk.1)   IDA=9.3 ;;
+            v9.4.0-release) IDA=9.4 ;;
+            *) echo "unknown sdk"; exit 1 ;;
+          esac
+          echo "IDA=$IDA" >> "$GITHUB_ENV"
+          mkdir -p out
+          cp "${IDASDK}/src/bin/plugins/eject_plugin/eject_plugin.${{ matrix.ext }}" out/
+          # hcli fat-archive: the per-version zip declares the exact IDA version it targets.
+          jq ".plugin.idaVersions = \"==${IDA}\"" ida-plugin.json > out/ida-plugin.json
+          ls -l out
+
+      - name: Upload plugin artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-ida${{ env.IDA }}-${{ matrix.os }}
+          path: out/*
+          if-no-files-found: error
+
+  # --- Standalone saver exe: separate release assets (x64 + native ARM64). SDK-independent; pin 9.4. ---
+  exe:
+    name: Exe (${{ matrix.label }})
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: Linux
+          - label: linux-x64
             runner: ubuntu-latest
-          - os: macOS
-            runner: macos-latest
-          - os: Windows
+            exe: eject_idb
+          - label: linux-arm64
+            runner: ubuntu-24.04-arm
+            exe: eject_idb
+          - label: windows-x64
             runner: windows-latest
+            exe: eject_idb.exe
+          - label: windows-arm64
+            runner: windows-11-arm
+            exe: eject_idb.exe
+          - label: macos-universal
+            runner: macos-latest
+            exe: eject_idb
     env:
       IDASDK: ${{ github.workspace }}/ida-sdk
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
-      - name: Setup IDA SDK
+      - name: Setup IDA SDK (9.4) + our ida-cmake
         shell: bash
-        run: git clone --depth 1 --recurse-submodules https://github.com/HexRaysSA/ida-sdk ida-sdk
+        run: |
+          git clone --branch v9.4.0-release --depth 1 https://github.com/HexRaysSA/ida-sdk ida-sdk
+          git clone --depth 1 https://github.com/allthingsida/ida-cmake "${IDASDK}/ida-cmake"
 
-      - name: Configure
+      - name: Configure & build
         shell: bash
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+        run: |
+          case "${{ matrix.label }}" in
+            windows-x64)
+              cmake -S . -B build -A x64
+              cmake --build build --config Release --parallel ;;
+            windows-arm64)
+              cmake -S . -B build -A ARM64
+              cmake --build build --config Release --parallel ;;
+            macos-universal)
+              cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64"
+              cmake --build build --parallel ;;
+            *)
+              cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+              cmake --build build --parallel ;;
+          esac
 
-      - name: Build
+      - name: Stage exe
         shell: bash
-        run: cmake --build build --config Release
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          cp "${IDASDK}/src/bin/${{ matrix.exe }}" out/
+          if [ "${{ matrix.exe }}" = "eject_idb.exe" ]; then
+            mv "out/eject_idb.exe" "out/eject_idb-${{ matrix.label }}.exe"
+          else
+            mv "out/eject_idb" "out/eject_idb-${{ matrix.label }}"
+          fi
+          ls -l out
+
+      - name: Upload exe artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: exe-${{ matrix.label }}
+          path: out/*
+          if-no-files-found: error
+
+  # Native ARM64 plugin binaries, carried in the per-version zip as eject_plugin_aarch64.<ext>.
+  # (win-arm64 libs in 9.4; linux-arm64 in 9.3+.) hcli ignores them today (manual install);
+  # auto-activates if HexRaysSA/ida-hcli#209 lands arch-suffix resolution.
+  plugin-arm:
+    name: Plugin ARM (${{ matrix.label }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: linux-arm64-ida9.3
+            runner: ubuntu-24.04-arm
+            sdk: v9.3.1-sdk.1
+            ida: "9.3"
+            src: eject_plugin.so
+            dst: eject_plugin_aarch64.so
+            winarm: "no"
+          - label: linux-arm64-ida9.4
+            runner: ubuntu-24.04-arm
+            sdk: v9.4.0-release
+            ida: "9.4"
+            src: eject_plugin.so
+            dst: eject_plugin_aarch64.so
+            winarm: "no"
+          - label: windows-arm64-ida9.4
+            runner: windows-11-arm
+            sdk: v9.4.0-release
+            ida: "9.4"
+            src: eject_plugin.dll
+            dst: eject_plugin_aarch64.dll
+            winarm: "yes"
+    env:
+      IDASDK: ${{ github.workspace }}/ida-sdk
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup IDA SDK (${{ matrix.sdk }}) + our ida-cmake
+        shell: bash
+        run: |
+          git clone --branch ${{ matrix.sdk }} --depth 1 https://github.com/HexRaysSA/ida-sdk ida-sdk
+          git clone --depth 1 https://github.com/allthingsida/ida-cmake "${IDASDK}/ida-cmake"
+
+      - name: Configure & build (ARM64)
+        shell: bash
+        run: |
+          if [ "${{ matrix.winarm }}" = "yes" ]; then
+            cmake -S . -B build -A ARM64
+            cmake --build build --config Release --parallel
+          else
+            cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+            cmake --build build --parallel
+          fi
+
+      - name: Stage arm plugin (renamed)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          cp "${IDASDK}/src/bin/plugins/eject_plugin/${{ matrix.src }}" "out/${{ matrix.dst }}"
+          ls -l out
+
+      - name: Upload arm artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pluginarm-ida${{ matrix.ida }}-${{ matrix.label }}
+          path: out/*
+          if-no-files-found: error
+
+  # --- Package + release: per-IDA-version flat plugin zip (hcli-valid) + exe assets ---
+  publish-release:
+    name: Publish Release
+    runs-on: ubuntu-latest
+    needs: [plugin, exe, plugin-arm]
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Assemble hcli plugin zips (flat, per IDA version)
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ github.ref_name }}"
+          mkdir -p out
+          for ida in 9.2 9.3 9.4; do
+            rm -rf stage && mkdir -p stage
+            # Each plugin-ida<ver>-<os> artifact holds eject_plugin.<ext> + a stamped ida-plugin.json.
+            found=0
+            for d in artifacts/plugin-ida${ida}-*/; do
+              [ -d "$d" ] || continue
+              cp -v "$d"/* stage/
+              found=1
+            done
+            [ "$found" = "1" ] || { echo "no plugin artifacts for ida${ida}"; continue; }
+            # arm plugin binaries carried in-zip (already renamed eject_plugin_aarch64.<ext>), if any
+            for d in artifacts/pluginarm-ida${ida}-*/; do
+              [ -d "$d" ] && cp -v "$d"/* stage/ || true
+            done
+            ( cd stage && zip -r "../out/eject_plugin-${TAG}-ida${ida}.zip" . )
+          done
+          echo "=== plugin zips ==="; ls -l out
+
+      - name: Lint plugin zips with hcli
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet ida-hcli || pipx install ida-hcli || { echo "hcli install failed; skipping lint"; exit 0; }
+          for z in out/eject_plugin-*.zip; do
+            echo "=== hcli plugin lint $z ==="
+            hcli plugin lint "$z" || echo "lint reported issues for $z (review)"
+          done
+
+      - name: Collect standalone exe assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          for d in artifacts/exe-*/; do cp -v "$d"/* out/; done
+          echo "=== release assets ==="; ls -l out
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Eject IDB ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            out/eject_plugin-${{ github.ref_name }}-ida*.zip
+            out/eject_idb-*
