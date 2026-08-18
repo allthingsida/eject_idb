@@ -286,11 +286,14 @@ jobs:
             hcli plugin lint "$z" || echo "lint reported issues for $z (review)"
           done
 
-      - name: Collect standalone exe assets
+      - name: Bundle standalone exes into a single tools zip
         shell: bash
         run: |
           set -euo pipefail
-          for d in artifacts/exe-*/; do cp -v "$d"/* out/; done
+          TAG="${{ github.ref_name }}"
+          rm -rf tools && mkdir -p tools
+          for d in artifacts/exe-*/; do cp -v "$d"/* tools/; done
+          ( cd tools && zip -r "../out/eject_idb-tools-${TAG}.zip" . )
           echo "=== release assets ==="; ls -l out
 
       - name: Create GitHub Release
