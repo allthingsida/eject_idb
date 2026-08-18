@@ -2,7 +2,7 @@
   "IDAMetadataDescriptorVersion": 1,
   "plugin": {
     "name": "eject_idb",
-    "version": "0.0.3",
+    "version": "0.0.4",
     "entryPoint": "eject_plugin",
     "description": "Emergency IDB saver that spawns a separate thread waiting for a signal to save your database when IDA hangs or crashes.",
     "urls": {

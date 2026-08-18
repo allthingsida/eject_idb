@@ -16,6 +16,7 @@ Prerequisites:
 - CMake 3.27+
 - IDA SDK 9.2+ (set `IDASDK` environment variable)
 - ida-cmake (installed correctly)
+- [libidacpp](https://github.com/allthingsida/libidacpp) (auto-fetched if not present as a sibling checkout)
 - Visual Studio 2022 (Windows) / GCC/Clang (Linux/macOS)
 
 ```bash
@@ -42,7 +43,11 @@ Alternatively, download pre-built binaries from the [releases page](https://gith
    eject_idb "C:\full\path\to\database.idb"
    ```
 4. The plugin wakes up, saves as `database.ejected.idb`
-5. (Windows only) A dialog prompts whether to forcefully exit IDA
+5. What happens next depends on the platform:
+   - **Windows**: a dialog prompts whether to forcefully exit IDA.
+   - **Linux/macOS**: no dialog (IDA's UI is presumed hung). The plugin prints the ejected
+     path and a `kill -9 <pid>` hint to the terminal IDA was launched from — kill IDA
+     manually once you see it.
 
 **Important**: The IDB path must match exactly (case-sensitive, full path).
 

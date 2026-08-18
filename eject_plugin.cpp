@@ -6,14 +6,18 @@
 
 // Eject IDB by Elias Bachaalany(c) AllThingsIDA
 
-#include <thread>
-#include <functional>
-#include <string>
 #include <memory>
+#include <string>
 
 #ifdef __NT__
     #include <windows.h>
+#else
+    #include <unistd.h>
 #endif
+
+// Include BEFORE the IDA headers: pro.h poisons identifiers (e.g. `wait` in
+// SDK 9.2) that C++20 std headers pulled in here (<atomic>, <thread>) use.
+#include <libidacpp/ipc/named_semaphore.hpp>
 
 #include <ida.hpp>
 #include <idp.hpp>
@@ -26,63 +30,10 @@
 // - use on_event/modern mechanism
 // - delay event handler installation with a timer. give time to other plugins to install their handlers; come in last
 
-class semaphore_helper_t 
-{
-private:
-    std::thread thread_;
-    std::string sem_name_;
-    qsemaphore_t sem_;
-    std::function<void()> callback_;
-    bool should_exit_;
-
-public:
-    semaphore_helper_t(const char* sem_name, std::function<void()> callback)
-        : sem_name_(sem_name), callback_(callback), sem_(nullptr), should_exit_(false) { }
-
-    ~semaphore_helper_t() {
-        stop();
-    }
-
-    void start() 
-    {
-        sem_ = qsem_create(sem_name_.c_str(), 0);
-        if (sem_ == nullptr)
-            return;
-
-        thread_ = std::thread([this]() 
-        {
-            while (qsem_wait(sem_, -1)) 
-            {
-                if (should_exit_)
-                    break;
-                callback_();
-            }
-        });
-    }
-
-    void signal() 
-    {
-        if (sem_ != nullptr) 
-            qsem_post(sem_);
-    }
-
-    void stop() 
-    {
-        if (sem_ != nullptr) 
-        {
-            should_exit_ = true;
-            qsem_post(sem_);
-            thread_.join();
-            qsem_free(sem_);
-            sem_ = nullptr;
-        }
-    }
-};
-
 //--------------------------------------------------------------------------
 struct plugin_ctx_t : public plugmod_t
 {
-    std::unique_ptr<semaphore_helper_t> sem_helper;
+    libidacpp::ipc::semaphore_waiter_t waiter;
 
     bool disable_ui = false;
     static ssize_t idaapi ui_callback(void* ud, int notification_code, va_list va)
@@ -94,34 +45,44 @@ struct plugin_ctx_t : public plugmod_t
     void do_eject()
     {
         qstring p = get_idb_path();
-        auto idx = p.rfind('.');
-        if (idx == qstring::npos)
+        auto new_name = derive_ejected_path(p.c_str());
+        if (!new_name)
             return;
 
         // unfortunately, `save_database` calls the main thread/UI to display success/failure messages
         // thus, before 'ejecting', let's disable/disallow all UI messages from being processed.
         disable_ui = true;
         flush_buffers();
-        qstring new_name = p.substr(0, idx) + ".ejected" + p.substr(idx);
-        save_database(new_name.c_str(), DBFL_BAK);
+        save_database(new_name->c_str(), DBFL_BAK);
         // Now it is safe to kill IDA.
 #ifdef __NT__
         if (MessageBoxW(NULL, L"IDB has been ejected. Do you want to forcefully exit IDA?", L"eject_idb", MB_YESNO | MB_ICONINFORMATION) == IDYES)
             ExitProcess(0);
+#else
+        // IDA's UI is presumed hung, so no dialogs: print to the IDA console
+        // (may not repaint) and to the terminal IDA was launched from.
+        // (qeprintf = the SDK's stderr printf; CRT fprintf/stderr are poisoned.)
+        msg("eject_idb: IDB ejected to %s\n", new_name->c_str());
+        qeprintf("eject_idb: IDB ejected to %s\n"
+                 "IDA may be hung -- you may now kill it: kill -9 %d\n",
+                 new_name->c_str(), (int)getpid());
 #endif
         disable_ui = false;
     }
 
-    plugin_ctx_t() 
+    plugin_ctx_t()
     {
-        char sem_name[64];
-        make_semaphore_name(get_idb_path().c_str(), sem_name, sizeof(sem_name));
-        sem_helper.reset(
-            new semaphore_helper_t(sem_name, std::bind(&plugin_ctx_t::do_eject, this)));
-        sem_helper->start();
-
-        msg("eject_idb installed. call the 'eject_idb \"%s\"' command line tool to eject this database!\n",
-            get_idb_path().c_str());
+        std::string sem_name = make_semaphore_name(get_idb_path().c_str());
+        if (waiter.start(sem_name.c_str(), [this]() { do_eject(); }))
+        {
+            msg("eject_idb installed. call the 'eject_idb \"%s\"' command line tool to eject this database!\n",
+                get_idb_path().c_str());
+        }
+        else
+        {
+            // e.g. sandboxed macOS denying sem_open: stay loaded but inert.
+            msg("eject_idb: could not create the eject semaphore; plugin is inactive.\n");
+        }
         hook_to_notification_point(HT_UI, ui_callback, this);
     }
 
@@ -155,6 +116,7 @@ struct plugin_ctx_t : public plugmod_t
 
     ~plugin_ctx_t() override
     {
+        waiter.stop();
         unhook_from_notification_point(HT_UI, ui_callback, this);
     }
 };
